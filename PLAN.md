@@ -42,44 +42,44 @@ carry over unchanged — they are transport-agnostic.
 
 ### Phase 1 — CLI core: spawn (start)
 
-- [ ] Scaffold: `skills/foreman/`, `src/`, `extension/foreman-done/`, `test/`.
-- [ ] Port `launch.ts` spec construction: role resolution (project
+- [x] Scaffold: `skills/foreman/`, `src/`, `extension/foreman-done/`, `test/`.
+- [x] Port `launch.ts` spec construction: role resolution (project
       `.pi/agents/` → global `~/.pi/agent/agents/` → package `agents/`),
       parent-contact footer, scratch dir, prompt-file generation.
-- [ ] Port the run wrapper: execute the spec in a new tmux pane
+- [x] Port the run wrapper: execute the spec in a new tmux pane
       (`split-window -d` with `--surface right|down|tab` mapping to
       `-h` / `-v` / `new-window`), name the pane (`select-pane -T`),
       print the sentinel on child exit.
-- [ ] `start` prints the same JSON shape (`{pane, session, launch}`) so the
+- [x] `start` prints the same JSON shape (`{pane, session, launch}`) so the
       SKILL.md protocol and any existing habits survive.
-- [ ] Spawn test: child pi opens in the pane, runs its brief.
+- [x] Spawn test: child pi opens in the pane, runs its brief.
 
 ### Phase 2 — Child side: sidecar fidelity + report channel
 
-- [ ] Port `luvus-done.ts` → `extension/foreman-done/`: `foreman_done` tool,
+- [x] Port `luvus-done.ts` → `extension/foreman-done/`: `foreman_done` tool,
       auto-exit, 5s completion nudge, `.exit` sidecar writer. Remove every
       Luvus call (status lease, notifications).
-- [ ] Report channel: child calls `node <skill-dir>/launch.ts send --to
+- [x] Report channel: child calls `node <skill-dir>/launch.ts send --to
       <parent-pane> --text ...` → `tmux send-keys -l ... Enter`. Atomic
       paste+Enter in one invocation, mirroring `agent send` semantics.
-- [ ] Decide ping naming (`foreman_ping` vs keeping `caller_ping` — the
+- [x] Decide ping naming (`foreman_ping` vs keeping `caller_ping` — the
       orchestrator prompts currently say "never caller_ping", so a rename
       avoids stale muscle memory).
-- [ ] Close-on-done: wrapper kills its own pane after the grace period on a
+- [x] Close-on-done: wrapper kills its own pane after the grace period on a
       `done`/`handoff` sidecar; `error`/`ping`/crash panes stay open.
-- [ ] End-to-end test: real tmux session, child pi reports into a fake
+- [x] End-to-end test: real tmux session, child pi reports into a fake
       parent pane; verify with `tmux capture-pane -e -p` (the established
       visual-check pattern).
 
 ### Phase 3 — Resume, wait, diagnostics
 
-- [ ] `resume --launch <spec> --prompt <file> [--surface]`: new pane, same
+- [x] `resume --launch <spec> --prompt <file> [--surface]`: new pane, same
       session, launch record restored (spawn-time role record semantics).
-- [ ] `wait --session <file> --timeout <s>`: poll `.exit` (no Luvus lease
+- [x] `wait --session <file> --timeout <s>`: poll `.exit` (no Luvus lease
       TTL subtleties — the sidecar is the only signal, and it survives the
       pane being closed).
-- [ ] `last-message --session <file>`, `prune [--max-age-days] [--dry-run]`.
-- [ ] Port the relevant pi-luvus tests (launch spec, sidecar types, prune,
+- [x] `last-message --session <file>`, `prune [--max-age-days] [--dry-run]`.
+- [x] Port the relevant pi-luvus tests (launch spec, sidecar types, prune,
       shim lookup); drop the Luvus-specific ones.
 
 ### Phase 4 — SKILL.md + orchestrator cutover
@@ -100,11 +100,11 @@ carry over unchanged — they are transport-agnostic.
 
 ### Phase 5 — Prove it
 
-- [ ] Run one real OpenSpec campaign via `pi-orchestrator.md` with foreman:
+- [x] Run one real OpenSpec campaign via `pi-orchestrator.md` with foreman:
       scout → worker → reviewer round-trip, one resume, one review-fix loop.
-- [ ] Verify close-on-done timing against the grace period and a blocked
+- [x] Verify close-on-done timing against the grace period and a blocked
       wait (no lost reports — the failure mode that motivated the tmux move).
-- [ ] Only then retire the pi-luvus skill for orchestrators (the pi-parent
+- [x] Only then retire the pi-luvus skill for orchestrators (the pi-parent
       extension keeps serving pi-to-pi until the pi-task fork lands).
 
 ## Non-goals
