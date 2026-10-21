@@ -84,19 +84,19 @@ carry over unchanged — they are transport-agnostic.
 
 ### Phase 4 — SKILL.md + orchestrator cutover
 
-- [ ] Port SKILL.md: same structure (launch / waiting / while-it-runs /
+- [x] Port SKILL.md: same structure (launch / waiting / while-it-runs /
       review-fix loop), tmux vocabulary, parent naming step deleted
       (`$TMUX_PANE` replaces `luvus agent name`).
-- [ ] Update `~/.claude/commands/pi-orchestrator.md` and
+- [x] Update `~/.claude/commands/pi-orchestrator.md` and
       `mbv-orchestrator.md`: skill name, report procedure (`launch.ts send`),
       resume command; campaign logic unchanged.
-- [ ] `~/.claude/luvus-agent-hook.sh` + its four settings.json hook entries:
+- [x] `~/.claude/luvus-agent-hook.sh` + its four settings.json hook entries:
       delete (pure Luvus reporting; nothing reads it once Luvus is out).
 - [ ] Child agent files (`~/.pi/agent/agents/worker.md`, `scout.md`,
       `rust-worker.md`): replace the `luvus_done`/`caller_ping` ceremony with
       `foreman_done` — **only when pi-luvus retires**, since those files are
       shared with the pi-luvus path until then.
-- [ ] Install: `npx skills add <this-repo> -g -a claude-code`.
+- [x] Install: `npx skills add <this-repo> -g -a claude-code`.
 
 ### Phase 5 — Prove it
 
