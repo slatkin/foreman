@@ -12,9 +12,11 @@
  */
 import { randomBytes } from "node:crypto";
 import {
+  existsSync,
   mkdirSync,
   readFileSync,
   realpathSync,
+  rmSync,
   statSync,
   writeFileSync,
 } from "node:fs";
@@ -26,7 +28,12 @@ import {
   buildSubagentToolAllowlist,
   loadAgentDefaults,
 } from "./agent-defs.ts";
-import { autoPrune, defaultScratchDir } from "./prune.ts";
+import {
+  autoPrune,
+  defaultScratchDir,
+  pruneScratch,
+  DEFAULT_PRUNE_MAX_AGE_DAYS,
+} from "./prune.ts";
 import {
   LAUNCH_SPEC_VERSION,
   buildPaneTitle,
@@ -43,7 +50,12 @@ import {
   type SurfacePlacement,
 } from "./placement.ts";
 import { runSpec, type RunSpecDeps } from "./run.ts";
-import { removeExitSidecar } from "./exit-sidecar.ts";
+import {
+  exitSidecarPath,
+  interpretExitSidecar,
+  readExitSidecar,
+  removeExitSidecar,
+} from "./exit-sidecar.ts";
 import { findLastAssistantMessage, getNewEntries } from "./session.ts";
 import { slugifyName } from "./slug.ts";
 import { encodeChildEnv, resolveDenyTools } from "./child-env.ts";
@@ -68,6 +80,12 @@ const DONE_EXTENSION_PATH = join(
 /** Close-on-done grace used when `--close-grace-ms` is omitted. */
 const DEFAULT_CLOSE_GRACE_MS = 5000;
 
+/** Default `wait` timeout, in seconds. */
+const DEFAULT_WAIT_TIMEOUT_S = 600;
+
+/** Poll interval for the `wait` loop. */
+const WAIT_POLL_MS = 500;
+
 /** Node version that runs `.ts` without a flag, required by the pane side. */
 const MIN_NODE: readonly [number, number] = [22, 18];
 
@@ -75,8 +93,11 @@ const USAGE = [
   "Usage:",
   "  node cli.ts start --name <child> --role <role> --cwd <dir> --brief <file> --parent <pane> [--scratch <dir>] [--close-grace-ms <n>] [--surface right|down|tab]",
   "  node cli.ts send --to <pane> --text <text>",
-  "  node cli.ts last-message --session <file>",
   "  node cli.ts run <spec> [<prompt>]",
+  "  node cli.ts last-message --session <file>",
+  "  node cli.ts wait --session <file> [--timeout <seconds>]",
+  "  node cli.ts prune [--scratch <dir>] [--max-age-days <n>] [--dry-run]",
+  "  node cli.ts resume --launch <spec> --prompt <file> [--name <child>] [--surface right|down|tab]",
 ].join("\n");
 
 const CLI_OPTIONS = {
@@ -91,6 +112,11 @@ const CLI_OPTIONS = {
   to: { type: "string" },
   text: { type: "string" },
   session: { type: "string" },
+  launch: { type: "string" },
+  prompt: { type: "string" },
+  timeout: { type: "string" },
+  "max-age-days": { type: "string" },
+  "dry-run": { type: "boolean" },
   help: { type: "boolean", short: "h" },
 } as const;
 
@@ -106,6 +132,11 @@ interface CliValues {
   to?: string;
   text?: string;
   session?: string;
+  launch?: string;
+  prompt?: string;
+  timeout?: string;
+  "max-age-days"?: string;
+  "dry-run"?: boolean;
   help?: boolean;
 }
 
@@ -208,6 +239,27 @@ function lastMessageCommand(values: CliValues, deps: CliDeps): number {
   const text = findLastAssistantMessage(getNewEntries(sessionPath, 0));
   write(`${text ?? "(no assistant message)"}\n`);
   return 0;
+}
+
+/**
+ * The `--surface` flag of the launching commands. A missing flag means the
+ * default placement; an unknown value is a usage error (the caller exits 2
+ * and the message goes to stderr).
+ */
+function surfacePlacement(
+  values: CliValues,
+  writeErr: (text: string) => void,
+): SurfacePlacement | null {
+  const requested = values.surface;
+  if (requested === undefined) return DEFAULT_SURFACE_PLACEMENT;
+  const parsed = parseSurfacePlacement(requested);
+  if (parsed === undefined) {
+    writeErr(
+      `invalid --surface value: ${requested} (expected right, down or tab)\n`,
+    );
+    return null;
+  }
+  return parsed;
 }
 
 /** Parse `--close-grace-ms`, defaulting to `DEFAULT_CLOSE_GRACE_MS`. */
@@ -326,6 +378,56 @@ function startCommand(
 }
 
 /**
+ * `resume`: run an existing launch spec in a new pane with a new prompt.
+ *
+ * The spec is reused unchanged, so the child resumes the same session and
+ * keeps its close grace; only the prompt and the pane are new. The prompt
+ * gets the parent-contact footer again — without it the resumed child has no
+ * instruction to send its report, and the orchestrator never wakes.
+ */
+function resumeCommand(
+  values: CliValues,
+  deps: CliDeps,
+  placement: SurfacePlacement,
+): number {
+  const env = deps.env ?? process.env;
+  const write = deps.stdout ?? ((text: string) => process.stdout.write(text));
+
+  const launchPath = required("--launch", values.launch);
+  const promptPath = required("--prompt", values.prompt);
+  if (!isFile(launchPath))
+    throw new Error(`launch spec is not a file: ${launchPath}`);
+  if (!isFile(promptPath))
+    throw new Error(`prompt is not a file: ${promptPath}`);
+  assertHostEnv(env);
+
+  const spec = readLaunchSpec(launchPath);
+
+  let sentPrompt = promptPath;
+  if (spec.parent !== undefined) {
+    sentPrompt = `${promptPath}.resume.md`;
+    writeFileSync(
+      sentPrompt,
+      `${readFileSync(promptPath, "utf8")}\n${parentFooter(spec.parent, CLI_PATH)}\n`,
+    );
+  }
+  const paneLine = paneCommandLine(CLI_PATH, launchPath, sentPrompt);
+
+  // The new run must not read the earlier run's exit.
+  if (spec.sessionFile !== undefined) removeExitSidecar(spec.sessionFile);
+
+  const pane = createSurface(
+    values.name ?? spec.name,
+    placement,
+    callerPaneId(env),
+  );
+  runInPane(pane, paneLine);
+
+  write(JSON.stringify({ pane, launch: launchPath }) + "\n");
+  return 0;
+}
+
+/**
  * `run`: the pane-side wrapper. Resolve `pi` in this pane (so the pane's PATH
  * applies) and hand the spec to `runSpec`, which returns the exit code.
  */
@@ -357,6 +459,135 @@ async function runCommand(
   );
 }
 
+/** Parse `--timeout` as a positive number of seconds. */
+function waitTimeoutSeconds(value: string | undefined): number {
+  if (value === undefined) return DEFAULT_WAIT_TIMEOUT_S;
+  const seconds = Number(value);
+  if (!Number.isFinite(seconds) || seconds <= 0) {
+    throw new Error(`--timeout must be a positive number of seconds: ${value}`);
+  }
+  return seconds;
+}
+
+/**
+ * `wait`: poll `<session>.exit` until the child writes its sidecar.
+ *
+ * The sidecar is the only signal: it survives the pane being closed, so no
+ * host call and no screen read is needed. A missing file counts as no sidecar
+ * yet. The sidecar is consumed — removed — when it is found, so a second
+ * wait does not see the same exit. Exit 0 prints the interpreted result as
+ * one JSON line, exit 2 is a timeout, exit 1 is a usage error.
+ */
+async function waitCommand(values: CliValues, deps: CliDeps): Promise<number> {
+  const write = deps.stdout ?? ((text: string) => process.stdout.write(text));
+  const writeErr =
+    deps.stderr ?? ((text: string) => process.stderr.write(text));
+  const sleep =
+    deps.sleep ?? ((ms: number) => new Promise((r) => setTimeout(r, ms)));
+  try {
+    const sessionPath = required("--session", values.session);
+    const timeoutSeconds = waitTimeoutSeconds(values.timeout);
+
+    const sidecarPath = exitSidecarPath(sessionPath);
+    const deadline = Date.now() + timeoutSeconds * 1000;
+    for (;;) {
+      // The file's presence is the signal, not its content: a malformed
+      // sidecar is still an exit, and `interpretExitSidecar` maps an unknown
+      // payload to `done`.
+      if (existsSync(sidecarPath)) {
+        const result = interpretExitSidecar(readExitSidecar(sessionPath));
+        // The parent consumes the sidecar.
+        try {
+          rmSync(sidecarPath, { force: true });
+        } catch {
+          // Best effort: a stale sidecar only costs one poll cycle.
+        }
+        write(JSON.stringify(result) + "\n");
+        return 0;
+      }
+      const remaining = deadline - Date.now();
+      if (remaining <= 0) break;
+      await sleep(Math.min(WAIT_POLL_MS, remaining));
+    }
+
+    write(`${JSON.stringify({ sidecar: null })}\n`);
+    writeErr(`timeout after ${timeoutSeconds}s: no exit sidecar was seen\n`);
+    return 2;
+  } catch (error) {
+    // A usage error must leave stdout empty, so it is caught here instead of
+    // bubbling to the entry wrapper.
+    const message = error instanceof Error ? error.message : String(error);
+    writeErr(`cli.ts: ${message}\n`);
+    return 1;
+  }
+}
+
+/** Parse `--max-age-days`, defaulting to `DEFAULT_PRUNE_MAX_AGE_DAYS`. */
+function pruneMaxAgeDays(value: string | undefined): number {
+  if (value === undefined) return DEFAULT_PRUNE_MAX_AGE_DAYS;
+  const days = Number(value);
+  if (!Number.isFinite(days) || days < 0) {
+    throw new Error(`--max-age-days must be a non-negative number: ${value}`);
+  }
+  return days;
+}
+
+/** `prune`: delete launcher files older than the retention. */
+function pruneCommand(values: CliValues, deps: CliDeps): number {
+  const write = deps.stdout ?? ((text: string) => process.stdout.write(text));
+  const scratch = resolve(values.scratch ?? defaultScratchDir());
+  const maxAgeDays = pruneMaxAgeDays(values["max-age-days"]);
+  const dryRun = values["dry-run"] === true;
+  const maxAgeMs = maxAgeDays * 86_400_000;
+  const files = pruneScratch(scratch, { maxAgeMs, dryRun });
+  write(
+    JSON.stringify({
+      scratch,
+      maxAgeDays,
+      dryRun,
+      scanned: files.scanned,
+      deleted: files.deleted,
+      deletedBytes: files.deletedBytes,
+    }) + "\n",
+  );
+  return 0;
+}
+
+/**
+ * Route one parsed command to its implementation. `start` and `resume` share
+ * the `--surface` flag, so both read the placement here.
+ */
+async function dispatch(
+  command: string,
+  values: CliValues,
+  positionals: string[],
+  deps: CliDeps,
+  writeErr: (text: string) => void,
+): Promise<number> {
+  switch (command) {
+    case "start": {
+      const placement = surfacePlacement(values, writeErr);
+      return placement === null ? 2 : startCommand(values, deps, placement);
+    }
+    case "resume": {
+      const placement = surfacePlacement(values, writeErr);
+      return placement === null ? 2 : resumeCommand(values, deps, placement);
+    }
+    case "send":
+      return sendCommand(values);
+    case "last-message":
+      return lastMessageCommand(values, deps);
+    case "wait":
+      return waitCommand(values, deps);
+    case "prune":
+      return pruneCommand(values, deps);
+    case "run":
+      return runCommand(positionals.slice(1), deps);
+    default:
+      throw new Error(`unknown subcommand: ${command}\n${USAGE}`);
+  }
+}
+
 /**
  * Run one CLI invocation and return the code the process should exit with.
  * Failures throw; the shim and the direct-entry wrapper turn them into a
@@ -384,28 +615,7 @@ export async function main(
     writeErr(`${USAGE}\n`);
     return 2;
   }
-  if (command === "start") {
-    const requested = values.surface;
-    const parsed =
-      requested === undefined ? undefined : parseSurfacePlacement(requested);
-    if (requested !== undefined && parsed === undefined) {
-      writeErr(
-        `invalid --surface value: ${requested} (expected right, down or tab)\n`,
-      );
-      return 2;
-    }
-    return startCommand(
-      values as CliValues,
-      deps,
-      parsed ?? DEFAULT_SURFACE_PLACEMENT,
-    );
-  }
-  if (command === "send") return sendCommand(values as CliValues);
-  if (command === "last-message") {
-    return lastMessageCommand(values as CliValues, deps);
-  }
-  if (command === "run") return runCommand(positionals.slice(1), deps);
-  throw new Error(`unknown subcommand: ${command}\n${USAGE}`);
+  return dispatch(command, values as CliValues, positionals, deps, writeErr);
 }
 
 /**
