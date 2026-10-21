@@ -16,7 +16,6 @@ import {
   mkdirSync,
   readFileSync,
   realpathSync,
-  rmSync,
   statSync,
   writeFileSync,
 } from "node:fs";
@@ -474,9 +473,21 @@ function waitTimeoutSeconds(value: string | undefined): number {
  *
  * The sidecar is the only signal: it survives the pane being closed, so no
  * host call and no screen read is needed. A missing file counts as no sidecar
- * yet. The sidecar is consumed — removed — when it is found, so a second
- * wait does not see the same exit. Exit 0 prints the interpreted result as
- * one JSON line, exit 2 is a timeout, exit 1 is a usage error.
+ * yet.
+ *
+ * Waiting is strictly read-only: the sidecar is never removed here. The
+ * child's pane-side wrapper reads the same file after the child process
+ * exits — to close the pane on `done`/`handoff` and to quote a ping in the
+ * no-report wake-up — and the child writes the sidecar while it is still
+ * running, seconds before it exits. A waiting parent that deleted the file
+ * would break both. Removal belongs to the parent, after it has read the
+ * result: `resume` already removes the sidecar on relaunch, and the skill
+ * teaches the same after a wait. The trade-off is that a repeated wait on
+ * the same session reports the same exit again.
+ *
+ * Exit 0 prints the interpreted result as one JSON line (with the sidecar's
+ * absolute path, so the parent knows what to clean up), exit 2 is a timeout,
+ * exit 1 is a usage error.
  */
 async function waitCommand(values: CliValues, deps: CliDeps): Promise<number> {
   const write = deps.stdout ?? ((text: string) => process.stdout.write(text));
@@ -489,6 +500,9 @@ async function waitCommand(values: CliValues, deps: CliDeps): Promise<number> {
     const timeoutSeconds = waitTimeoutSeconds(values.timeout);
 
     const sidecarPath = exitSidecarPath(sessionPath);
+    // The parent is told the absolute path so it can clean the file up
+    // itself; waiting never removes it.
+    const sidecarAbsPath = resolve(sidecarPath);
     const deadline = Date.now() + timeoutSeconds * 1000;
     for (;;) {
       // The file's presence is the signal, not its content: a malformed
@@ -496,13 +510,7 @@ async function waitCommand(values: CliValues, deps: CliDeps): Promise<number> {
       // payload to `done`.
       if (existsSync(sidecarPath)) {
         const result = interpretExitSidecar(readExitSidecar(sessionPath));
-        // The parent consumes the sidecar.
-        try {
-          rmSync(sidecarPath, { force: true });
-        } catch {
-          // Best effort: a stale sidecar only costs one poll cycle.
-        }
-        write(JSON.stringify(result) + "\n");
+        write(JSON.stringify({ ...result, sidecar: sidecarAbsPath }) + "\n");
         return 0;
       }
       const remaining = deadline - Date.now();
@@ -511,7 +519,9 @@ async function waitCommand(values: CliValues, deps: CliDeps): Promise<number> {
     }
 
     write(`${JSON.stringify({ sidecar: null })}\n`);
-    writeErr(`timeout after ${timeoutSeconds}s: no exit sidecar was seen\n`);
+    writeErr(
+      `timeout after ${timeoutSeconds}s: no exit sidecar was seen (a sidecar, if any, would have been printed; wait never removes it)\n`,
+    );
     return 2;
   } catch (error) {
     // A usage error must leave stdout empty, so it is caught here instead of

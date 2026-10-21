@@ -2,7 +2,7 @@ import "./host-env.ts";
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { existsSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { main } from "../src/cli.ts";
 import { exitSidecarPath } from "../src/exit-sidecar.ts";
 import { tempDirHelpers } from "./temp-dir.ts";
@@ -30,7 +30,7 @@ async function runWait(
   return { code, stdout: stdout.join(""), stderr: stderr.join("") };
 }
 
-test("wait prints the interpreted sidecar and consumes it", async () => {
+test("wait prints the interpreted sidecar and leaves it in place", async () => {
   await withTempDirAsync(async (dir) => {
     const sessionFile = join(dir, "child.jsonl");
     const sidecar = exitSidecarPath(sessionFile);
@@ -39,19 +39,40 @@ test("wait prints the interpreted sidecar and consumes it", async () => {
     assert.equal(result.code, 0);
     assert.equal(
       result.stdout,
-      `${JSON.stringify({ reason: "done", exitCode: 0 })}\n`,
+      `${JSON.stringify({
+        reason: "done",
+        exitCode: 0,
+        sidecar: resolve(sidecar),
+      })}\n`,
     );
     assert.equal(result.stderr, "");
-    // The parent consumes the sidecar: it is gone after the wait.
-    assert.equal(existsSync(sidecar), false);
+    // The wait is read-only: the child's pane-side wrapper still needs the
+    // sidecar after the child exits, so the file must survive the wait.
+    assert.equal(existsSync(sidecar), true);
+  });
+});
+
+test("a second wait reports the same exit again", async () => {
+  await withTempDirAsync(async (dir) => {
+    const sessionFile = join(dir, "child.jsonl");
+    const sidecar = exitSidecarPath(sessionFile);
+    writeFileSync(sidecar, JSON.stringify({ type: "done" }));
+    const first = await runWait(["--session", sessionFile, "--timeout", "5"]);
+    const second = await runWait(["--session", sessionFile, "--timeout", "5"]);
+    assert.equal(first.code, 0);
+    assert.equal(second.code, 0);
+    assert.equal(first.stdout, second.stdout);
+    // Still read-only: the sidecar is the parent's to remove.
+    assert.equal(existsSync(sidecar), true);
   });
 });
 
 test("wait prints the ping payload of a ping sidecar", async () => {
   await withTempDirAsync(async (dir) => {
     const sessionFile = join(dir, "child.jsonl");
+    const sidecar = exitSidecarPath(sessionFile);
     writeFileSync(
-      exitSidecarPath(sessionFile),
+      sidecar,
       JSON.stringify({ type: "ping", name: "worker", message: "need answer" }),
     );
     const result = await runWait(["--session", sessionFile, "--timeout", "5"]);
@@ -60,7 +81,9 @@ test("wait prints the ping payload of a ping sidecar", async () => {
       reason: "ping",
       exitCode: 0,
       ping: { name: "worker", message: "need answer" },
+      sidecar: resolve(sidecar),
     });
+    assert.equal(existsSync(sidecar), true);
   });
 });
 
@@ -77,6 +100,7 @@ test("wait times out with the null sidecar line and a message on stderr", async 
     assert.equal(result.stdout, `${JSON.stringify({ sidecar: null })}\n`);
     assert.match(result.stderr, /timeout/);
     assert.match(result.stderr, /no exit sidecar/);
+    assert.match(result.stderr, /would have been printed/);
   });
 });
 
@@ -96,9 +120,13 @@ test("wait picks up a sidecar that appears while it polls", async () => {
     assert.equal(result.code, 0);
     assert.equal(
       result.stdout,
-      `${JSON.stringify({ reason: "done", exitCode: 0 })}\n`,
+      `${JSON.stringify({
+        reason: "done",
+        exitCode: 0,
+        sidecar: resolve(sidecar),
+      })}\n`,
     );
-    assert.equal(existsSync(sidecar), false);
+    assert.equal(existsSync(sidecar), true);
   });
 });
 
@@ -112,9 +140,13 @@ test("wait does not crash on a malformed sidecar", async () => {
     // An unknown payload maps to `done`.
     assert.equal(
       result.stdout,
-      `${JSON.stringify({ reason: "done", exitCode: 0 })}\n`,
+      `${JSON.stringify({
+        reason: "done",
+        exitCode: 0,
+        sidecar: resolve(sidecar),
+      })}\n`,
     );
-    assert.equal(existsSync(sidecar), false);
+    assert.equal(existsSync(sidecar), true);
   });
 });
 
