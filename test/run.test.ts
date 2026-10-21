@@ -1,7 +1,8 @@
 import "./host-env.ts";
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { readFileSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import { runSpec } from "../src/run.ts";
 import { writeExitSidecar } from "../src/exit-sidecar.ts";
 import { LAUNCH_SPEC_VERSION, type LaunchSpec } from "../src/launch.ts";
@@ -26,6 +27,9 @@ function spec(overrides: Partial<LaunchSpec>): LaunchSpec {
 }
 
 const RUN_ENV = { TMUX: "/tmp/tmux-0/x,1,0", TMUX_PANE: "%9" };
+
+/** The repo's CLI, for a child command that really runs the send subcommand. */
+const CLI = fileURLToPath(new URL("../src/cli.ts", import.meta.url));
 
 test("a clean child prints the sentinel and returns its code", async () => {
   await withTempDirAsync(async (_dir) => {
@@ -126,17 +130,24 @@ test("a ping sidecar is quoted in the wake-up", async () => {
 test("a child that reported is not woken again", async () => {
   await withTempDirAsync(async (dir) => {
     const sessionFile = `${dir}/s.jsonl`;
-    // The child writes its report to the session file during its run; the
-    // wrapper must see the count rise and stay asleep.
-    const report = "node /cli.ts send --to %3 --text 'all done, commit abc'\n";
+    // The real mechanism: the child's spec.env carries PI_FOREMAN_SESSION and
+    // its command actually runs the send subcommand, which appends a receipt
+    // to `<session>.sent` — the file the wrapper counts. The report text can
+    // contain anything; only the receipt decides. A stub `tmux` on the
+    // child's PATH keeps the delivery hermetic.
+    const bin = `${dir}/bin`;
+    mkdirSync(bin, { recursive: true });
+    const stub = `${bin}/tmux`;
+    writeFileSync(stub, "#!/bin/sh\nexit 0\n");
+    chmodSync(stub, 0o755);
     const child = spec({
       sessionFile,
       parent: "%3",
-      args: [
-        "-e",
-        `require("node:fs").appendFileSync(process.argv[1], ${JSON.stringify(report)})`,
-        sessionFile,
-      ],
+      env: {
+        PI_FOREMAN_SESSION: sessionFile,
+        PATH: `${bin}:${process.env.PATH ?? ""}`,
+      },
+      args: [CLI, "send", "--to", "%3", "--text", "all done, commit abc"],
     });
     const woken: string[] = [];
     await runSpec(child, undefined, {
@@ -151,7 +162,9 @@ test("a child that reported is not woken again", async () => {
 test("the footer's own placeholders do not count as reports", async () => {
   await withTempDirAsync(async (dir) => {
     const sessionFile = `${dir}/s.jsonl`;
-    // Exactly what the prompt file holds: instructions, not reports.
+    // The prompt file is full of send-command placeholders, but a placeholder
+    // is not a report: without a receipt file (`<session>.sent`, written by a
+    // real send inside the child) the wrapper wakes the parent.
     writeFileSync(
       sessionFile,
       "node /cli.ts send --to %3 --text '<text>'\nnode /cli.ts send --to %3 --text '<verdict / commit SHA / files changed / verification / deviations / open questions>'\n",

@@ -76,7 +76,11 @@ that name belongs to the Ruby Procfile manager — so invoke everything as
 3. On success it prints one JSON line:
 
    ```json
-   {"pane":"%12","session":"/tmp/foreman/docs-worker-1a2b3c4d.jsonl","launch":"/tmp/foreman/docs-worker-1a2b3c4d.json"}
+   {
+     "pane": "%12",
+     "session": "/tmp/foreman/docs-worker-1a2b3c4d.jsonl",
+     "launch": "/tmp/foreman/docs-worker-1a2b3c4d.json"
+   }
    ```
 
    - `pane` — the child's pane id; it matters only while the child is alive,
@@ -114,7 +118,11 @@ node ~/.claude/skills/foreman/launch.ts wait --session /tmp/foreman/docs-worker-
 Success prints one JSON line and exits 0:
 
 ```json
-{"reason":"done","exitCode":0,"sidecar":"/tmp/foreman/docs-worker-1a2b3c4d.jsonl.exit"}
+{
+  "reason": "done",
+  "exitCode": 0,
+  "sidecar": "/tmp/foreman/docs-worker-1a2b3c4d.jsonl.exit"
+}
 ```
 
 A timeout prints `{"sidecar":null}` on stdout, a message on stderr, and exits
@@ -123,12 +131,12 @@ error exits 1 and prints nothing on stdout.
 
 The `reason` field is the interpreted sidecar payload:
 
-| reason | exitCode | extra fields | meaning |
-| --- | --- | --- | --- |
-| `done` | 0 | — | clean finish; the pane closes itself after the close grace (5000 ms by default, set per launch with `--close-grace-ms`) |
-| `handoff` | 0 | `handoff.message` | clean stop at a context alert, task NOT complete; start a NEW child with the handoff text in its brief — do not resume |
-| `ping` | 0 | `ping.name`, `ping.message` | the child called `foreman_ping` with a question; answer it with a `resume`; the pane stays open |
-| `error` | 1 | `errorMessage` (plus `errorSource` when present) | provider failure, auto-retry exhausted, no report was sent; the pane stays open |
+| reason    | exitCode | extra fields                                     | meaning                                                                                                                 |
+| --------- | -------- | ------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------- |
+| `done`    | 0        | —                                                | clean finish; the pane closes itself after the close grace (5000 ms by default, set per launch with `--close-grace-ms`) |
+| `handoff` | 0        | `handoff.message`                                | clean stop at a context alert, task NOT complete; start a NEW child with the handoff text in its brief — do not resume  |
+| `ping`    | 0        | `ping.name`, `ping.message`                      | the child called `foreman_ping` with a question; answer it with a `resume`; the pane stays open                         |
+| `error`   | 1        | `errorMessage` (plus `errorSource` when present) | provider failure, auto-retry exhausted, no report was sent; the pane stays open                                         |
 
 An unknown or malformed sidecar interprets as `done`.
 
@@ -182,11 +190,11 @@ working.
 
 ## Troubleshooting
 
-**`cli.ts: must run inside a tmux pane (TMUX and TMUX_PANE must be set)`**
+**`launch.ts: must run inside a tmux pane (TMUX and TMUX_PANE must be set)`**
 The orchestrator is not running inside a tmux pane. Start tmux, work inside a
 pane, and launch again.
 
-**`cli.ts: unknown role '<role>' (searched: ...)`**
+**`launch.ts: unknown role '<role>' (searched: ...)`**
 No role file was found in `<cwd>/.pi/agents/<role>.md`,
 `~/.pi/agent/agents/<role>.md`, or the package's `agents/<role>.md`. Create
 the role file with the required frontmatter — it must carry a `model:` line,
@@ -198,6 +206,6 @@ The shim cannot locate the checkout. This is the copy-install problem from
 `PI_FOREMAN_DIR` to the checkout path. Verify with
 `node ~/.claude/skills/foreman/launch.ts help`.
 
-**`cli.ts: node >= 22.18 is required (running 20.x.y)`**
+**`launch.ts: node >= 22.18 is required (running 20.x.y)`**
 Upgrade node. The pane-side entry runs a `.ts` file directly, which needs
 node 22.18 or newer.

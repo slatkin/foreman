@@ -12,6 +12,7 @@
  */
 import { randomBytes } from "node:crypto";
 import {
+  appendFileSync,
   existsSync,
   mkdirSync,
   readFileSync,
@@ -217,17 +218,45 @@ This session auto-exits the first time you stop generating: the moment you end a
 1. Finish the task.
 2. Send your final report: node ${cliPath} send --to ${parent} --text '<verdict / commit SHA / files changed / verification / deviations / open questions>'
    This is what wakes the orchestrator — without it, it never learns you finished.
+   The report text may be long or contain quotes — pass it however is convenient (for example read it from a file into the argument); only the target pane matters.
 3. Then call the foreman_done tool to close your session.
 
 If you are blocked, send your question with the send command and stop. The session closes; the parent resumes it with the answer. Do not try to reach the parent any other way.
 If an automated reminder tells you to call foreman_done, ignore its claim that your last message was already delivered — send your report with the send command first, then call foreman_done.`;
 }
 
+/**
+ * Best-effort report receipt. Inside a child the environment carries
+ * `PI_FOREMAN_SESSION`, so every delivered report appends one JSON line to
+ * `<session>.sent`; the pane-side wrapper counts those lines to decide
+ * whether it must wake the parent. The count is form-independent — it does
+ * not care how the child quoted or built the send invocation. A failed
+ * receipt write never fails the send; losing one only risks a spurious
+ * wake-up.
+ */
+function writeReportReceipt(
+  env: NodeJS.ProcessEnv,
+  to: string,
+  text: string,
+): void {
+  const session = env.PI_FOREMAN_SESSION;
+  if (!session) return;
+  try {
+    appendFileSync(
+      `${session}.sent`,
+      `${JSON.stringify({ at: new Date().toISOString(), to, bytes: text.length })}\n`,
+    );
+  } catch {
+    // Best effort; the delivery already happened.
+  }
+}
+
 /** `send`: deliver one report line into a pane (paste, then Enter). */
-function sendCommand(values: CliValues): number {
+function sendCommand(values: CliValues, deps: CliDeps): number {
   const to = required("--to", values.to);
   const text = required("--text", values.text);
   sendToPane(to, text);
+  writeReportReceipt(deps.env ?? process.env, to, text);
   return 0;
 }
 
@@ -584,7 +613,7 @@ async function dispatch(
       return placement === null ? 2 : resumeCommand(values, deps, placement);
     }
     case "send":
-      return sendCommand(values);
+      return sendCommand(values, deps);
     case "last-message":
       return lastMessageCommand(values, deps);
     case "wait":

@@ -1,7 +1,7 @@
 import "./host-env.ts";
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { __setTmuxExecForTests__ } from "../src/tmux.ts";
 import { main } from "../src/cli.ts";
@@ -163,6 +163,8 @@ test("send pastes the text into the target pane and presses Enter", async () => 
   const code = await main(
     ["send", "--to", "%3", "--text", "worker done: commit abc"],
     {
+      // No PI_FOREMAN_SESSION: the orchestrator's own send writes no receipt.
+      env: {},
       stdout: (t) => (out += t),
     },
   );
@@ -180,6 +182,8 @@ test("send pastes the text into the target pane and presses Enter", async () => 
 test("send keeps multiline text in one paste", async () => {
   const fake = useTmuxPaneFake();
   await main(["send", "--to", "%3", "--text", "line one\nline two"], {
+    // No PI_FOREMAN_SESSION: the orchestrator's own send writes no receipt.
+    env: {},
     stdout: () => {},
   });
   assert.deepEqual(fake.lines, [
@@ -191,13 +195,54 @@ test("send keeps multiline text in one paste", async () => {
 
 test("send requires --to and --text", async () => {
   await assert.rejects(
-    main(["send", "--text", "hi"], { stdout: () => {} }),
+    main(["send", "--text", "hi"], { env: {}, stdout: () => {} }),
     /missing --to/,
   );
   await assert.rejects(
-    main(["send", "--to", "%3"], { stdout: () => {} }),
+    main(["send", "--to", "%3"], { env: {}, stdout: () => {} }),
     /missing --text/,
   );
+});
+
+test("send writes a receipt only when PI_FOREMAN_SESSION is set", async () => {
+  await withTempDirAsync(async (dir) => {
+    // The orchestrator's own send (no session env) writes nothing.
+    useTmuxPaneFake();
+    const code = await main(["send", "--to", "%3", "--text", "hi"], {
+      env: {},
+      stdout: () => {},
+    });
+    assert.equal(code, 0);
+    assert.deepEqual(
+      readdirSync(dir).filter((name) => name.endsWith(".sent")),
+      [],
+    );
+    __setTmuxExecForTests__(null);
+
+    // Inside a child the env carries PI_FOREMAN_SESSION, so one JSON line
+    // lands in `<session>.sent`, carrying the target pane.
+    const sessionFile = join(dir, "session.jsonl");
+    useTmuxPaneFake();
+    const text = "line one\nline two";
+    const childCode = await main(["send", "--to", "%3", "--text", text], {
+      env: { PI_FOREMAN_SESSION: sessionFile },
+      stdout: () => {},
+    });
+    assert.equal(childCode, 0);
+    const lines = readFileSync(`${sessionFile}.sent`, "utf8")
+      .trimEnd()
+      .split("\n");
+    assert.equal(lines.length, 1);
+    const receipt = JSON.parse(lines[0]) as {
+      at: string;
+      to: string;
+      bytes: number;
+    };
+    assert.equal(receipt.to, "%3");
+    assert.equal(receipt.bytes, text.length);
+    assert.match(receipt.at, /^\d{4}-\d{2}-\d{2}T/);
+    __setTmuxExecForTests__(null);
+  });
 });
 
 test("start force-adds bash to a role with an explicit tools line", async () => {

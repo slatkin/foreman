@@ -49,21 +49,18 @@ interface ChildOutcome {
 }
 
 /**
- * Count the child's real reports to `parent` in its session file. The
- * footer's own `'<text>'` placeholders do not count (a `<` right after the
- * quote marks a placeholder). Any quoting of the message counts.
+ * Count the child's delivered reports via the receipt file. The `send`
+ * subcommand, run inside the child (which inherits `PI_FOREMAN_SESSION`),
+ * appends one JSON line to `<session>.sent` per delivered report, so the
+ * count is form-independent: it does not care how the child quoted or built
+ * the send invocation. A missing file counts as no reports.
  */
-function countReports(sessionFile: string | undefined, parent: string): number {
+function countReports(sessionFile: string | undefined): number {
   if (!sessionFile) return 0;
   try {
-    const text = readFileSync(sessionFile, "utf8");
-    // The report command the footer teaches: `send --to <pane> --text '...'`.
-    const pane = parent.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-    return (
-      text.match(
-        new RegExp(`send --to ${pane} --text (?:'(?!<)|\\\\?"(?!<)|\\$)`, "g"),
-      )?.length ?? 0
-    );
+    return readFileSync(`${sessionFile}.sent`, "utf8")
+      .split("\n")
+      .filter(Boolean).length;
   } catch {
     return 0;
   }
@@ -114,9 +111,7 @@ export async function runSpec(
   // surface.
   if (pane) env.PI_FOREMAN_SURFACE = pane;
 
-  const reportsBefore = spec.parent
-    ? countReports(spec.sessionFile, spec.parent)
-    : 0;
+  const reportsBefore = countReports(spec.sessionFile);
   const args = prompt ? [...spec.args, `@${prompt}`] : [...spec.args];
 
   // Best-effort title, late enough to survive the child's boot. Unref'd so it
@@ -167,10 +162,7 @@ export async function runSpec(
   // A child that exits without a report leaves the parent asleep forever;
   // wake it with the exit state so it can read the session. A ping sidecar
   // carries the question, so the wake-up quotes it directly.
-  if (
-    spec.parent &&
-    countReports(spec.sessionFile, spec.parent) <= reportsBefore
-  ) {
+  if (spec.parent && countReports(spec.sessionFile) <= reportsBefore) {
     const sidecar = spec.sessionFile
       ? readExitSidecar(spec.sessionFile)
       : undefined;
