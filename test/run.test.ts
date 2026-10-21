@@ -159,6 +159,81 @@ test("a child that reported is not woken again", async () => {
   });
 });
 
+test("a report sent to another pane does not count as a report to the parent", async () => {
+  await withTempDirAsync(async (dir) => {
+    const sessionFile = `${dir}/s.jsonl`;
+    const receiptFile = `${sessionFile}.sent`;
+    // The receipt records the pane it went to. A report addressed to %99 is
+    // not a report to the parent (%3), so the parent must still be woken.
+    const line = `${JSON.stringify({ at: new Date().toISOString(), to: "%99", bytes: 4 })}\n`;
+    const child = spec({
+      sessionFile,
+      parent: "%3",
+      args: [
+        "-e",
+        `require("fs").appendFileSync(${JSON.stringify(receiptFile)}, ${JSON.stringify(line)})`,
+      ],
+    });
+    const woken: string[] = [];
+    await runSpec(child, undefined, {
+      env: RUN_ENV,
+      stdout: () => {},
+      sendToParent: (_to, text) => woken.push(text),
+    });
+    assert.equal(woken.length, 1);
+    assert.match(woken[0], /worker exited without sending a report/);
+  });
+});
+
+test("a report sent to the parent suppresses the wake-up", async () => {
+  await withTempDirAsync(async (dir) => {
+    const sessionFile = `${dir}/s.jsonl`;
+    const receiptFile = `${sessionFile}.sent`;
+    const line = `${JSON.stringify({ at: new Date().toISOString(), to: "%3", bytes: 4 })}\n`;
+    // The child delivers the report while it runs, so the receipt appears
+    // after the wrapper took its baseline count.
+    const child = spec({
+      sessionFile,
+      parent: "%3",
+      args: [
+        "-e",
+        `require("fs").appendFileSync(${JSON.stringify(receiptFile)}, ${JSON.stringify(line)})`,
+      ],
+    });
+    const woken: string[] = [];
+    await runSpec(child, undefined, {
+      env: RUN_ENV,
+      stdout: () => {},
+      sendToParent: (_to, text) => woken.push(text),
+    });
+    assert.deepEqual(woken, []);
+  });
+});
+
+test("a malformed receipt line is skipped and the parent is still woken", async () => {
+  await withTempDirAsync(async (dir) => {
+    const sessionFile = `${dir}/s.jsonl`;
+    const receiptFile = `${sessionFile}.sent`;
+    // A line that does not parse proves nothing about its target, so it
+    // cannot stand in for a report to the parent.
+    const child = spec({
+      sessionFile,
+      parent: "%3",
+      args: [
+        "-e",
+        `require("fs").appendFileSync(${JSON.stringify(receiptFile)}, "not json at all\\n")`,
+      ],
+    });
+    const woken: string[] = [];
+    await runSpec(child, undefined, {
+      env: RUN_ENV,
+      stdout: () => {},
+      sendToParent: (_to, text) => woken.push(text),
+    });
+    assert.equal(woken.length, 1);
+  });
+});
+
 test("the footer's own placeholders do not count as reports", async () => {
   await withTempDirAsync(async (dir) => {
     const sessionFile = `${dir}/s.jsonl`;

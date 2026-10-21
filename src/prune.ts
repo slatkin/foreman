@@ -40,6 +40,7 @@ function isManagedScratchFile(name: string): boolean {
     name.endsWith(".resume.md") ||
     name.endsWith(".exit") ||
     name.endsWith(".msg") ||
+    name.endsWith(".sent") ||
     name.endsWith(".report.md")
   );
 }

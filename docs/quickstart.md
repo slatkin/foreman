@@ -93,7 +93,7 @@ that name belongs to the Ruby Procfile manager — so invoke everything as
    splits yours side by side). `--scratch <dir>` overrides the scratch
    directory, which defaults to `${TMPDIR:-/tmp}/foreman`. The scratch
    directory holds the generated prompt, role prompt, launch spec, session
-   file and later sidecars.
+   file, later sidecars and the report receipt (`<session>.sent`).
 
 4. End your turn. The report arrives as a new message in your prompt.
 

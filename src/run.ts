@@ -49,21 +49,45 @@ interface ChildOutcome {
 }
 
 /**
- * Count the child's delivered reports via the receipt file. The `send`
+ * Count the child's reports to `parent` via the receipt file. The `send`
  * subcommand, run inside the child (which inherits `PI_FOREMAN_SESSION`),
  * appends one JSON line to `<session>.sent` per delivered report, so the
  * count is form-independent: it does not care how the child quoted or built
- * the send invocation. A missing file counts as no reports.
+ * the send invocation. Only receipts addressed to the parent count: a report
+ * sent to some other pane does not tell the parent that this child is done,
+ * so it must not suppress the wake-up. A receipt line that does not parse is
+ * skipped for the same reason. A missing file counts as no reports.
  */
-function countReports(sessionFile: string | undefined): number {
-  if (!sessionFile) return 0;
+function countReports(
+  sessionFile: string | undefined,
+  parent?: string,
+): number {
+  if (!sessionFile || !parent) return 0;
+  let content: string;
   try {
-    return readFileSync(`${sessionFile}.sent`, "utf8")
-      .split("\n")
-      .filter(Boolean).length;
+    content = readFileSync(`${sessionFile}.sent`, "utf8");
   } catch {
     return 0;
   }
+  let count = 0;
+  for (const line of content.split("\n")) {
+    if (!line) continue;
+    let receipt: unknown;
+    try {
+      receipt = JSON.parse(line);
+    } catch {
+      // A malformed line proves nothing about the target: skip it.
+      continue;
+    }
+    if (
+      typeof receipt === "object" &&
+      receipt !== null &&
+      (receipt as { to?: unknown }).to === parent
+    ) {
+      count += 1;
+    }
+  }
+  return count;
 }
 
 /** Map a finished child to its report code, printing why it could not start. */
@@ -111,7 +135,7 @@ export async function runSpec(
   // surface.
   if (pane) env.PI_FOREMAN_SURFACE = pane;
 
-  const reportsBefore = countReports(spec.sessionFile);
+  const reportsBefore = countReports(spec.sessionFile, spec.parent);
   const args = prompt ? [...spec.args, `@${prompt}`] : [...spec.args];
 
   // Best-effort title, late enough to survive the child's boot. Unref'd so it
@@ -162,7 +186,10 @@ export async function runSpec(
   // A child that exits without a report leaves the parent asleep forever;
   // wake it with the exit state so it can read the session. A ping sidecar
   // carries the question, so the wake-up quotes it directly.
-  if (spec.parent && countReports(spec.sessionFile) <= reportsBefore) {
+  if (
+    spec.parent &&
+    countReports(spec.sessionFile, spec.parent) <= reportsBefore
+  ) {
     const sidecar = spec.sessionFile
       ? readExitSidecar(spec.sessionFile)
       : undefined;

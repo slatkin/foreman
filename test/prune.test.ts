@@ -46,6 +46,20 @@ test("prunes every managed launcher suffix past the retention", () => {
   });
 });
 
+test("prunes a report receipt past the retention and keeps it within it", () => {
+  withTempDir((dir) => {
+    makeFiles(dir, ["old.sent"], 8 * 86_400_000);
+    makeFiles(dir, ["fresh.sent"], 1000);
+    const result = pruneScratch(dir, { maxAgeMs: 7 * 86_400_000 });
+    assert.equal(result.scanned, 2);
+    assert.deepEqual(
+      result.deleted.map((p) => p.split("/").pop()),
+      ["old.sent"],
+    );
+    assert.ok(existsSync(join(dir, "fresh.sent")));
+  });
+});
+
 test("ignores files with unknown suffixes", () => {
   withTempDir((dir) => {
     makeFiles(dir, ["a.txt", "b.md", "c.jsonl.bak"], 30 * 86_400_000);
