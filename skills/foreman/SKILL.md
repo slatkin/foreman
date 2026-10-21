@@ -53,15 +53,26 @@ with user consent).
 foreman package at run time: `PI_FOREMAN_DIR` if it is set, else the checkout
 that holds the shim (this file lives at `<root>/skills/foreman/launch.ts`).
 When the skill is installed by copy — `npx skills add` copies the files —
-the checkout is no longer next to the shim, so set `PI_FOREMAN_DIR` to the
-foreman checkout:
+the checkout is no longer next to the shim, and the shim then has to be told
+where the package is. Two ways, in order of preference:
 
-```bash
-export PI_FOREMAN_DIR=/path/to/foreman
-node ~/.claude/skills/foreman/launch.ts help
-```
+1. Point the installed shim back at the checkout (one symlink, no
+   environment variable, works for every agent that reads the skill dir):
+   ```bash
+   rm ~/.claude/skills/foreman/launch.ts
+   ln -s /path/to/foreman/skills/foreman/launch.ts ~/.claude/skills/foreman/launch.ts
+   ```
+   The shim resolves its own real path, so the checkout is found again.
+   Re-do this after every `skills add` / `skills update`, which copies the
+   shim back.
+2. Set `PI_FOREMAN_DIR` in the environment of the orchestrator:
+   ```bash
+   export PI_FOREMAN_DIR=/path/to/foreman
+   node ~/.claude/skills/foreman/launch.ts help
+   ```
 
-`help` prints the authoritative command set; everything below matches it.
+Check the install with `help`, which prints the authoritative command set;
+everything below matches it.
 
 ## Launch
 

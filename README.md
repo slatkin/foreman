@@ -77,8 +77,16 @@ npx skills add /home/slatkin/Dev/foreman -g -a claude-code
 ```
 
 The install copies `skills/foreman/` into `~/.claude/skills/foreman/`, so the
-shim can no longer find the package by walking up from its own path. Point it
-at the checkout with `PI_FOREMAN_DIR`:
+copied shim can no longer find the package by walking up from its own path.
+Point it back at the checkout with one symlink:
+
+```bash
+rm ~/.claude/skills/foreman/launch.ts
+ln -s /home/slatkin/Dev/foreman/skills/foreman/launch.ts ~/.claude/skills/foreman/launch.ts
+```
+
+Re-do it after every `skills add` / `skills update`, which copies the shim
+back. The alternative is the `PI_FOREMAN_DIR` environment variable:
 
 ```bash
 export PI_FOREMAN_DIR=/home/slatkin/Dev/foreman
