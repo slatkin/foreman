@@ -123,6 +123,19 @@ test("paneCommandLine rejects tokens a shell would expand", () => {
   }
 });
 
+test("paneCommandLine rejects a token with a single backslash", () => {
+  // A trailing backslash escapes the closing double quote, so the pane
+  // command line breaks.
+  assert.throws(
+    () => paneCommandLine("/cli.ts", "/tmp/a\\b.json"),
+    /Unsafe pane command token/,
+  );
+  assert.throws(
+    () => paneCommandLine("/cli.ts", "/tmp/dir\\"),
+    /Unsafe pane command token/,
+  );
+});
+
 test("buildPaneTitle cuts the task to 48 characters on one line", () => {
   assert.equal(
     buildPaneTitle("scout", "first line\nsecond line"),

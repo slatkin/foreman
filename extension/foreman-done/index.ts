@@ -193,6 +193,14 @@ export default function foremanDone(pi: ExtensionAPI) {
   pi.on("agent_end", (event, ctx) => {
     const messages = (event as any).messages as any[] | undefined;
 
+    // A sidecar the child already wrote is final: no path may replace it.
+    // `foreman_ping` and `foreman_done` set `doneCalled` and write their own
+    // sidecar (ping, handoff or done) before shutting the session down, so
+    // the error and auto-exit branches below must not act: they would
+    // clobber the child's report with a `done` or `error` sidecar, and
+    // shutdown a second time.
+    if (doneCalled) return;
+
     // Error turns still exit so the parent learns about the failure promptly
     // (auto-retry exhausted, provider overload, etc.). Without this the parent
     // would only see exit code 0 and a stale assistant message, mistaking the

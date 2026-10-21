@@ -270,6 +270,112 @@ test("auto-exit: a normal agent_end writes done and shuts down", async () => {
   });
 });
 
+test("auto-exit does not clobber the ping sidecar the child already wrote", async () => {
+  await withTempDirAsync(async (dir) => {
+    const sessionFile = join(dir, "s.jsonl");
+    await withChildEnv(
+      { PI_FOREMAN_SESSION: sessionFile, PI_FOREMAN_AUTO_EXIT: "1" },
+      async () => {
+        const { api, fire, tool } = makeMockPi();
+        foremanDone(api as never);
+        fire("session_start");
+        fire("agent_start");
+        const { ctx, count } = makeCtx();
+        await tool("foreman_ping").execute(
+          "c1",
+          { message: "which branch?" },
+          undefined,
+          undefined,
+          ctx,
+        );
+        assert.equal(count.shutdowns, 1);
+
+        // The turn that follows the ping must not replace the ping sidecar
+        // with a `done` one, and must not shut the session down again.
+        fire("agent_end", { messages: NORMAL_STOP }, ctx);
+        assert.equal(count.shutdowns, 1);
+        assert.deepEqual(
+          JSON.parse(readFileSync(`${sessionFile}.exit`, "utf8")),
+          {
+            type: "ping",
+            name: "subagent",
+            message: "which branch?",
+          },
+        );
+      },
+    );
+  });
+});
+
+test("auto-exit does not clobber the handoff sidecar the child already wrote", async () => {
+  await withTempDirAsync(async (dir) => {
+    const sessionFile = join(dir, "s.jsonl");
+    await withChildEnv(
+      { PI_FOREMAN_SESSION: sessionFile, PI_FOREMAN_AUTO_EXIT: "1" },
+      async () => {
+        const { api, fire, tool } = makeMockPi();
+        foremanDone(api as never);
+        fire("session_start");
+        fire("agent_start");
+        const { ctx, count } = makeCtx();
+        await tool("foreman_done").execute(
+          "c1",
+          { handoff: "goal: x. done: y. left: z." },
+          undefined,
+          undefined,
+          ctx,
+        );
+        assert.equal(count.shutdowns, 1);
+
+        fire("agent_end", { messages: NORMAL_STOP }, ctx);
+        assert.equal(count.shutdowns, 1);
+        assert.deepEqual(
+          JSON.parse(readFileSync(`${sessionFile}.exit`, "utf8")),
+          {
+            type: "handoff",
+            message: "goal: x. done: y. left: z.",
+          },
+        );
+      },
+    );
+  });
+});
+
+test("an error turn does not clobber the sidecar the child already wrote", async () => {
+  await withTempDirAsync(async (dir) => {
+    const sessionFile = join(dir, "s.jsonl");
+    await withChildEnv(
+      { PI_FOREMAN_SESSION: sessionFile, PI_FOREMAN_AUTO_EXIT: "1" },
+      async () => {
+        const { api, fire, tool } = makeMockPi();
+        foremanDone(api as never);
+        fire("session_start");
+        fire("agent_start");
+        const { ctx, count } = makeCtx();
+        await tool("foreman_ping").execute(
+          "c1",
+          { message: "which branch?" },
+          undefined,
+          undefined,
+          ctx,
+        );
+        assert.equal(count.shutdowns, 1);
+
+        fire("agent_end", { messages: ERROR }, ctx);
+        assert.equal(count.shutdowns, 1);
+        assert.deepEqual(
+          JSON.parse(readFileSync(`${sessionFile}.exit`, "utf8")),
+          {
+            type: "ping",
+            name: "subagent",
+            message: "which branch?",
+          },
+        );
+      },
+    );
+  });
+});
+
 test("an aborted turn stays open and schedules no nudge", async () => {
   await withTempDirAsync(async (dir) => {
     const sessionFile = join(dir, "s.jsonl");

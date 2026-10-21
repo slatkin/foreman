@@ -111,6 +111,8 @@ test("start resolves the role, writes the files and spawns the pane", async () =
     const tools = spec.args[spec.args.indexOf("--tools") + 1] as string;
     assert.ok(tools.split(",").includes("foreman_done"));
     assert.ok(tools.split(",").includes("foreman_ping"));
+    // The report channel runs through bash, so bash is force-added too.
+    assert.ok(tools.split(",").includes("bash"));
 
     // The prompt carries the brief plus the parent-contact footer, and the
     // footer teaches the send command with the real CLI path.
@@ -195,6 +197,99 @@ test("send requires --to and --text", async () => {
   await assert.rejects(
     main(["send", "--to", "%3"], { stdout: () => {} }),
     /missing --text/,
+  );
+});
+
+test("start force-adds bash to a role with an explicit tools line", async () => {
+  await withTempDirAsync(async (dir) => {
+    const fx = startFixture(dir);
+    // A role that lists its tools without bash could never run the report
+    // command, so the allowlist adds it back.
+    writeFileSync(
+      join(fx.cwd, ".pi", "agents", "scout.md"),
+      "---\nname: scout\ndescription: explores\nmodel: claude-sonnet-4\ntools: read,grep\n---\nYou are a scout.\n",
+    );
+    useTmuxPaneFake();
+    let out = "";
+    const code = await main(startArgv({ ...fx, scratch: fx.scratch }), {
+      env: HOST_ENV,
+      stdout: (t) => (out += t),
+    });
+    assert.equal(code, 0);
+    const printed = JSON.parse(out) as { launch: string };
+    const spec = JSON.parse(readFileSync(printed.launch, "utf8"));
+    const tools = (spec.args[spec.args.indexOf("--tools") + 1] as string).split(
+      ",",
+    );
+    assert.ok(tools.includes("read"));
+    assert.ok(tools.includes("grep"));
+    assert.ok(tools.includes("bash"));
+    assert.ok(tools.includes("foreman_done"));
+    assert.ok(tools.includes("foreman_ping"));
+    __setTmuxExecForTests__(null);
+  });
+});
+
+test("last-message prints the session's last assistant message", async () => {
+  await withTempDirAsync(async (dir) => {
+    const sessionPath = join(dir, "session.jsonl");
+    writeFileSync(
+      sessionPath,
+      [
+        { type: "session", id: "s1" },
+        {
+          type: "message",
+          id: "m1",
+          message: { role: "user", content: [{ type: "text", text: "do it" }] },
+        },
+        {
+          type: "message",
+          id: "m2",
+          message: {
+            role: "assistant",
+            content: [{ type: "text", text: "draft" }],
+          },
+        },
+        {
+          type: "message",
+          id: "m3",
+          message: {
+            role: "assistant",
+            content: [{ type: "text", text: "final report" }],
+          },
+        },
+      ]
+        .map((entry) => JSON.stringify(entry))
+        .join("\n") + "\n",
+    );
+    let out = "";
+    const code = await main(["last-message", "--session", sessionPath], {
+      stdout: (t) => (out += t),
+    });
+    assert.equal(code, 0);
+    assert.equal(out, "final report\n");
+  });
+});
+
+test("last-message reports a session without an assistant message", async () => {
+  await withTempDirAsync(async (dir) => {
+    const sessionPath = join(dir, "session.jsonl");
+    writeFileSync(
+      sessionPath,
+      `${JSON.stringify({ type: "session", id: "s1" })}\n`,
+    );
+    let out = "";
+    await main(["last-message", "--session", sessionPath], {
+      stdout: (t) => (out += t),
+    });
+    assert.equal(out, "(no assistant message)\n");
+  });
+});
+
+test("last-message requires --session", async () => {
+  await assert.rejects(
+    main(["last-message"], { stdout: () => {} }),
+    /missing --session/,
   );
 });
 

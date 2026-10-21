@@ -44,6 +44,7 @@ import {
 } from "./placement.ts";
 import { runSpec, type RunSpecDeps } from "./run.ts";
 import { removeExitSidecar } from "./exit-sidecar.ts";
+import { findLastAssistantMessage, getNewEntries } from "./session.ts";
 import { slugifyName } from "./slug.ts";
 import { encodeChildEnv, resolveDenyTools } from "./child-env.ts";
 
@@ -74,6 +75,7 @@ const USAGE = [
   "Usage:",
   "  node cli.ts start --name <child> --role <role> --cwd <dir> --brief <file> --parent <pane> [--scratch <dir>] [--close-grace-ms <n>] [--surface right|down|tab]",
   "  node cli.ts send --to <pane> --text <text>",
+  "  node cli.ts last-message --session <file>",
   "  node cli.ts run <spec> [<prompt>]",
 ].join("\n");
 
@@ -88,6 +90,7 @@ const CLI_OPTIONS = {
   surface: { type: "string" },
   to: { type: "string" },
   text: { type: "string" },
+  session: { type: "string" },
   help: { type: "boolean", short: "h" },
 } as const;
 
@@ -102,6 +105,7 @@ interface CliValues {
   surface?: string;
   to?: string;
   text?: string;
+  session?: string;
   help?: boolean;
 }
 
@@ -194,6 +198,15 @@ function sendCommand(values: CliValues): number {
   const to = required("--to", values.to);
   const text = required("--text", values.text);
   sendToPane(to, text);
+  return 0;
+}
+
+/** `last-message`: print a session's last assistant message. */
+function lastMessageCommand(values: CliValues, deps: CliDeps): number {
+  const write = deps.stdout ?? ((text: string) => process.stdout.write(text));
+  const sessionPath = required("--session", values.session);
+  const text = findLastAssistantMessage(getNewEntries(sessionPath, 0));
+  write(`${text ?? "(no assistant message)"}\n`);
   return 0;
 }
 
@@ -388,6 +401,9 @@ export async function main(
     );
   }
   if (command === "send") return sendCommand(values as CliValues);
+  if (command === "last-message") {
+    return lastMessageCommand(values as CliValues, deps);
+  }
   if (command === "run") return runCommand(positionals.slice(1), deps);
   throw new Error(`unknown subcommand: ${command}\n${USAGE}`);
 }

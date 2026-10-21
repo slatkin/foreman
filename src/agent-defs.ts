@@ -46,6 +46,13 @@ export const DEFAULT_SUBAGENT_TOOLS = "read,bash,edit,write,grep,find,ls";
  */
 const SUBAGENT_CONTROL_TOOLS = ["foreman_done", "foreman_ping"] as const;
 
+/**
+ * `bash` is force-added next to the control tools: the report channel is a
+ * bash command (`node <cli> send --to <pane> --text '...'`), so a role with
+ * an explicit `tools:` line that omits bash could never report to its parent.
+ */
+const SUBAGENT_REPORT_TOOL = "bash";
+
 /** Resolve the global agent config directory, respecting PI_CODING_AGENT_DIR. */
 export function getAgentConfigDir(): string {
   return process.env.PI_CODING_AGENT_DIR ?? join(homedir(), ".pi", "agent");
@@ -175,6 +182,7 @@ export function buildSubagentToolAllowlist(effectiveTools?: string): string {
   for (const tool of SUBAGENT_CONTROL_TOOLS) {
     allow.add(tool);
   }
+  allow.add(SUBAGENT_REPORT_TOOL);
 
   return [...allow].join(",");
 }
