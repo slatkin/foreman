@@ -36,7 +36,7 @@ import {
   writeLaunchSpec,
   type LaunchSpec,
 } from "./launch.ts";
-import { callerPaneId, createSurface, runInPane } from "./tmux.ts";
+import { callerPaneId, createSurface, runInPane, sendToPane } from "./tmux.ts";
 import {
   parseSurfacePlacement,
   DEFAULT_SURFACE_PLACEMENT,
@@ -73,6 +73,7 @@ const MIN_NODE: readonly [number, number] = [22, 18];
 const USAGE = [
   "Usage:",
   "  node cli.ts start --name <child> --role <role> --cwd <dir> --brief <file> --parent <pane> [--scratch <dir>] [--close-grace-ms <n>] [--surface right|down|tab]",
+  "  node cli.ts send --to <pane> --text <text>",
   "  node cli.ts run <spec> [<prompt>]",
 ].join("\n");
 
@@ -85,6 +86,8 @@ const CLI_OPTIONS = {
   scratch: { type: "string" },
   "close-grace-ms": { type: "string" },
   surface: { type: "string" },
+  to: { type: "string" },
+  text: { type: "string" },
   help: { type: "boolean", short: "h" },
 } as const;
 
@@ -97,6 +100,8 @@ interface CliValues {
   scratch?: string;
   "close-grace-ms"?: string;
   surface?: string;
+  to?: string;
+  text?: string;
   help?: boolean;
 }
 
@@ -182,6 +187,14 @@ This session auto-exits the first time you stop generating: the moment you end a
 
 If you are blocked, send your question with the send command and stop. The session closes; the parent resumes it with the answer. Do not try to reach the parent any other way.
 If an automated reminder tells you to call foreman_done, ignore its claim that your last message was already delivered — send your report with the send command first, then call foreman_done.`;
+}
+
+/** `send`: deliver one report line into a pane (paste, then Enter). */
+function sendCommand(values: CliValues): number {
+  const to = required("--to", values.to);
+  const text = required("--text", values.text);
+  sendToPane(to, text);
+  return 0;
 }
 
 /** Parse `--close-grace-ms`, defaulting to `DEFAULT_CLOSE_GRACE_MS`. */
@@ -374,6 +387,7 @@ export async function main(
       parsed ?? DEFAULT_SURFACE_PLACEMENT,
     );
   }
+  if (command === "send") return sendCommand(values as CliValues);
   if (command === "run") return runCommand(positionals.slice(1), deps);
   throw new Error(`unknown subcommand: ${command}\n${USAGE}`);
 }

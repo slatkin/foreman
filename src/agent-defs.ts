@@ -41,10 +41,10 @@ export const DEFAULT_SUBAGENT_TOOLS = "read,bash,edit,write,grep,find,ls";
 
 /**
  * Tools every child keeps, so it can always finish. The foreman-done child
- * extension (Phase 2) registers `foreman_done`; a ping or message tool may be
- * added there, and this list grows with it.
+ * extension registers `foreman_done` and `foreman_ping`; a denied control
+ * tool would leave a child unable to report or ask for help.
  */
-const SUBAGENT_CONTROL_TOOLS = ["foreman_done"] as const;
+const SUBAGENT_CONTROL_TOOLS = ["foreman_done", "foreman_ping"] as const;
 
 /** Resolve the global agent config directory, respecting PI_CODING_AGENT_DIR. */
 export function getAgentConfigDir(): string {

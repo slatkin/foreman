@@ -165,21 +165,26 @@ export async function runSpec(
   write(`__SUBAGENT_DONE_${code}__\n`);
 
   // A child that exits without a report leaves the parent asleep forever;
-  // wake it with the exit state so it can read the session.
+  // wake it with the exit state so it can read the session. A ping sidecar
+  // carries the question, so the wake-up quotes it directly.
   if (
     spec.parent &&
     countReports(spec.sessionFile, spec.parent) <= reportsBefore
   ) {
     const sidecar = spec.sessionFile
-      ? readExitSidecar(spec.sessionFile)?.type
+      ? readExitSidecar(spec.sessionFile)
       : undefined;
-    const state = sidecar ?? (code === 0 ? "exited" : `crashed (code ${code})`);
     const cliHint = deps.cliPath ?? "<foreman-cli>";
+    let wake: string;
+    if (sidecar?.type === "ping" && typeof sidecar.message === "string") {
+      wake = `${spec.name} pinged: ${sidecar.message}`;
+    } else {
+      const state =
+        sidecar?.type ?? (code === 0 ? "exited" : `crashed (code ${code})`);
+      wake = `${spec.name} ${state} without sending a report. Read its last message: node ${cliHint} last-message --session ${spec.sessionFile ?? "<session>"}`;
+    }
     try {
-      (deps.sendToParent ?? sendToPane)(
-        spec.parent,
-        `${spec.name} ${state} without sending a report. Read its last message: node ${cliHint} last-message --session ${spec.sessionFile ?? "<session>"}`,
-      );
+      (deps.sendToParent ?? sendToPane)(spec.parent, wake);
     } catch (error) {
       writeErr(
         `Failed to wake parent ${spec.parent}: ${error instanceof Error ? error.message : String(error)}\n`,

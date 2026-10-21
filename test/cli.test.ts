@@ -110,6 +110,7 @@ test("start resolves the role, writes the files and spawns the pane", async () =
     assert.ok(spec.args.includes("claude-sonnet-4"));
     const tools = spec.args[spec.args.indexOf("--tools") + 1] as string;
     assert.ok(tools.split(",").includes("foreman_done"));
+    assert.ok(tools.split(",").includes("foreman_ping"));
 
     // The prompt carries the brief plus the parent-contact footer, and the
     // footer teaches the send command with the real CLI path.
@@ -152,6 +153,49 @@ test("start honours --surface down and tab", async () => {
     assert.match(tab.lines[1], /^new-window -d -t \$7 /);
     __setTmuxExecForTests__(null);
   });
+});
+
+test("send pastes the text into the target pane and presses Enter", async () => {
+  const fake = useTmuxPaneFake();
+  let out = "";
+  const code = await main(
+    ["send", "--to", "%3", "--text", "worker done: commit abc"],
+    {
+      stdout: (t) => (out += t),
+    },
+  );
+  assert.equal(code, 0);
+  assert.equal(out, "");
+  assert.deepEqual(fake.lines, [
+    "send-keys -t %3 -l worker done: commit abc",
+    "send-keys -t %3 Enter",
+  ]);
+  __setTmuxExecForTests__(null);
+});
+
+// A multiline report must arrive as one paste: every tmux call is one argv
+// array, so the newlines ride inside the single literal text.
+test("send keeps multiline text in one paste", async () => {
+  const fake = useTmuxPaneFake();
+  await main(["send", "--to", "%3", "--text", "line one\nline two"], {
+    stdout: () => {},
+  });
+  assert.deepEqual(fake.lines, [
+    "send-keys -t %3 -l line one\nline two",
+    "send-keys -t %3 Enter",
+  ]);
+  __setTmuxExecForTests__(null);
+});
+
+test("send requires --to and --text", async () => {
+  await assert.rejects(
+    main(["send", "--text", "hi"], { stdout: () => {} }),
+    /missing --to/,
+  );
+  await assert.rejects(
+    main(["send", "--to", "%3"], { stdout: () => {} }),
+    /missing --text/,
+  );
 });
 
 test("start rejects an invalid --surface value without spawning", async () => {

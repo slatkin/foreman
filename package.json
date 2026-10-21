@@ -19,8 +19,14 @@
     "format": "prettier --write .",
     "format:check": "prettier --check ."
   },
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": "*",
+    "@sinclair/typebox": "*"
+  },
   "devDependencies": {
+    "@earendil-works/pi-coding-agent": "^0.87.1",
     "@eslint/js": "^10.0.1",
+    "@sinclair/typebox": "^0.34.49",
     "@types/node": "^26.6.5",
     "eslint": "^10.12.0",
     "eslint-config-prettier": "^10.1.8",

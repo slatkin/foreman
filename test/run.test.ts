@@ -104,6 +104,25 @@ test("a child that crashed names the exit code in the wake-up", async () => {
   });
 });
 
+test("a ping sidecar is quoted in the wake-up", async () => {
+  await withTempDirAsync(async (dir) => {
+    const sessionFile = `${dir}/s.jsonl`;
+    writeExitSidecar(sessionFile, {
+      type: "ping",
+      name: "worker",
+      message: "need a decision on the axis",
+    });
+    const woken: string[] = [];
+    await runSpec(spec({ sessionFile, parent: "%3" }), undefined, {
+      env: RUN_ENV,
+      stdout: () => {},
+      sendToParent: (_to, text) => woken.push(text),
+    });
+    assert.equal(woken.length, 1);
+    assert.match(woken[0], /worker pinged: need a decision on the axis/);
+  });
+});
+
 test("a child that reported is not woken again", async () => {
   await withTempDirAsync(async (dir) => {
     const sessionFile = `${dir}/s.jsonl`;
