@@ -34,8 +34,8 @@ by a small child-side pi extension.
 skills/foreman/SKILL.md      orchestration protocol for the Claude orchestrator
 skills/foreman/launch.ts     shim/CLI entry: start, send, run, last-message, wait, prune, resume
 src/                         CLI core (tmux-backed port of pi-luvus cli.ts/launch.ts)
-  cli.ts                     subcommand dispatch and the authoritative usage text
-  launch.ts                  launch-spec construction, prompt/footer generation
+  cli.ts                     subcommand dispatch, usage text, parent-footer generation
+  launch.ts                  launch-spec construction
   tmux.ts                    the only terminal host: split, name, send, close
   placement.ts               surface placement: right | down | tab
   run.ts                     pane-side run wrapper: sentinel, wake-up, close-on-done
@@ -63,8 +63,11 @@ node <skill-dir>/launch.ts prune [--scratch <dir>] [--max-age-days <n>] [--dry-r
 
 `start` prints `{"pane":..., "session":..., "launch":...}`. `wait` prints one
 JSON line with the sidecar result and the sidecar's absolute path; it never
-removes the file (the pane-side wrapper reads the same file after the child
-exits), so the parent removes it after it has handled the result.
+removes the file, and neither should the parent: the pane-side wrapper reads
+the same file after the child exits, so removing it early leaves the wrapper
+blind. `start` and `resume` clear the sidecar of the session they (re)launch,
+`prune` reclaims `.exit` files after the retention window, and a repeated
+`wait` on the same session re-reports the same exit, which is harmless.
 
 The child reports with `launch.ts send --to <parent-pane> --text ...`
 (`tmux send-keys` into the orchestrator pane; arrives as a new turn), then

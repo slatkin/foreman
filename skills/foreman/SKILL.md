@@ -33,9 +33,9 @@ Two channels with different jobs — do not confuse them:
   arrives as a new turn. This is the ONLY way you learn anything, because you
   cannot poll after ending your turn.
 - **Lifecycle** = the `<session>.exit` sidecar file, written by
-  `foreman_done` (`{"type":"done"}`, `{"type":"handoff",...}`,
-  `{"type":"ping",...}`) or by the child extension's error path
-  (`{"type":"error",...}`). The pane-side wrapper prints
+  `foreman_done` (`{"type":"done"}`, `{"type":"handoff",...}`), by
+  `foreman_ping` (`{"type":"ping",...}`) or by the child extension's error
+  path (`{"type":"error",...}`). The pane-side wrapper prints
   `__SUBAGENT_DONE_<exit code>__` when the child exits, and closes its own
   pane only on a `done` or `handoff` sidecar, after a grace period (5000 ms
   by default, set per launch with `--close-grace-ms`). The sidecar survives
@@ -107,24 +107,32 @@ everything below matches it.
    is the message, not the file.
 4. When you are awake again (the report arrived, or you want the child's
    final state), wait for the sidecar and read it:
+
    ```bash
    node <skill-dir>/launch.ts wait --session <session> [--timeout <seconds>]
    ```
+
    `wait` blocks until the sidecar appears (default timeout 600 s). On
    success it prints one JSON line and exits 0:
    `{"reason":"done","exitCode":0,"sidecar":"/abs/path/<session>.exit"}`.
    `reason` is one of `done`, `handoff`, `ping`, `error`. A timeout prints
    `{"sidecar":null}` and exits 2 (a child may simply still be working — wait
    again, or nudge it); a usage error exits 1 and prints nothing on stdout.
-   `wait` never deletes the sidecar — the pane-side wrapper reads the same
-   file after the child exits, so a waiting parent must not remove it early.
-   Read the JSON, act on it, and only then remove the file yourself:
-   ```bash
-   rm <sidecar>
-   ```
-   The `sidecar` field of the printed JSON is that absolute path. (`start`
-   and `resume` remove a stale sidecar by themselves, so a fresh run never
-   reads an earlier run's exit.)
+   `wait` never deletes the sidecar, and neither should you: the pane-side
+   wrapper reads the same file after the child exits, so removing it early
+   leaves the wrapper blind — it cannot close the pane, and the ping
+   wake-up loses the question. Read the JSON and act on it, but LEAVE the
+   sidecar in place; it is cleaned up for you:
+
+   - `start` and `resume` clear the sidecar of the session they (re)launch,
+     so a fresh run never reads an earlier run's exit.
+   - `prune` reclaims `.exit` files once they fall outside the retention
+     window.
+   - A repeated `wait` on the same session re-reports the same exit, which
+     is harmless.
+
+   The `sidecar` field of the printed JSON is that absolute path.
+
 5. Act on the reason from the wait JSON:
    - `done` → clean finish. The child sent its report and closed itself;
      the pane has closed after the close grace.
@@ -142,7 +150,7 @@ everything below matches it.
      the wrapper sent you. Answer it with a `resume` (see below). The pane
      stays open until you close it.
    - No sidecar at all (timeout) and `__SUBAGENT_DONE_<n>__` at the tail of
-     the child's pane → the wrapper itself was killed, so it wrote no
+     the child's pane → the wrapper itself was killed, so the child wrote no
      sidecar. The pane stays open. Read the last assistant message from the
      session file (step 6) and decide whether to relaunch, then close the
      pane once you are done with it.
@@ -157,8 +165,8 @@ everything below matches it.
 ## While it runs / after
 
 - A follow-up (a recheck, or the answer to the child's question) always
-  runs in a **new** pane: remove the child's `.exit` sidecar, write the
-  follow-up to a prompt file, and run:
+  runs in a **new** pane: write the follow-up to a prompt file and run
+  (`resume` clears the stale `.exit` sidecar of the session it relaunches):
   ```bash
   node <skill-dir>/launch.ts resume --launch <spec> --prompt <file> [--name <child>] [--surface right|down|tab]
   ```
